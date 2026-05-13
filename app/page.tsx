@@ -130,6 +130,7 @@ const stages: Stage[] = [
         "Standards for unstructured data transformation pipelines",
         "Standards for organisation data mining procedures",
         "Standards for organisation process mining procedures",
+        "Organisation real time data sharing protocols via APIs",
       ],
       accountability: [
         "Standardised adversarial malicious actor security",
