@@ -1,3 +1,7 @@
+'use client';
+
+import { useState } from "react";
+
 const dimensions = [
   {
     id: "dataQuality",
@@ -21,6 +25,42 @@ type DimensionId = (typeof dimensions)[number]["id"];
 type Stage = {
   name: string;
   practices: Record<DimensionId, string[]>;
+};
+
+type Practice = {
+  id: string;
+  label: string;
+  stageIndex: number;
+  stageName: string;
+  dimensionId: DimensionId;
+  dimensionName: string;
+  dimensionShortName: string;
+};
+
+type AssessmentStage = {
+  name: string;
+  practices: Record<DimensionId, Practice[]>;
+};
+
+type AssessmentPayload = {
+  checkedPracticeIds: string[];
+};
+
+type DimensionAssessment = {
+  dimensionId: DimensionId;
+  achievedStageIndex: number;
+  achievedStageName: string;
+  blockingStageIndex: number | null;
+  blockingStageName: string | null;
+  blockingPractices: Practice[];
+};
+
+type AssessmentResult = {
+  payload: AssessmentPayload;
+  overallStageIndex: number;
+  overallStageName: string;
+  dimensions: DimensionAssessment[];
+  recommendations: Practice[];
 };
 
 const stages: Stage[] = [
@@ -48,7 +88,7 @@ const stages: Stage[] = [
     name: "Isolated AI enabled",
     practices: {
       dataQuality: [
-        "Critical AI metadata standards",
+        "AI metadata standards",
         "Structured metadata classification standards",
         "Data quality metadata measurement standards",
         "Data lineage metadata standards",
@@ -59,12 +99,11 @@ const stages: Stage[] = [
         "Local data pipeline standards",
         "Data repository standards",
         "Storage architectures defined",
-        "Federated storage governance",
         "ETL standards",
-        "API-based data access control policies",
-        "Intra-departmental data integration rules",
-        "Inter-departmental data integration rules",
-        "Inter-departmental data synchronization protocols",
+        "API based data access control policies",
+        "Intra departmental data integration rules",
+        "Inter departmental data integration rules",
+        "Inter departmental data synchronization protocols",
       ],
       accountability: [
         "Data access compliance policy to laws and regulations",
@@ -95,16 +134,13 @@ const stages: Stage[] = [
       accountability: [
         "Standardised adversarial malicious actor security",
         "Data steward council",
-        "Standardised organisation data governance training procedures governed",
-        "Reference to data governance standards",
-        "Communication standards",
-        "Organisation AI data stewardship defined",
         "Organisation AI data alignment strategy defined",
+        "Standardised organisation-wide data governance training procedures",
       ],
     },
   },
   {
-    name: "Autonomous Organisation Agents Optimised",
+    name: "Autonomous Agents Optimised",
     practices: {
       dataQuality: [
         "Metadata includes agent data usage",
@@ -115,53 +151,194 @@ const stages: Stage[] = [
       ],
       availability: [
         "Defined agent orchestration architecture",
-        "Event-driven governance architecture policies",
-        "Agent-to-agent interoperability protocols",
+        "Event-driven governance architectures policies",
+        "Agent to agent interoperability protocols",
         "Autonomous data routing policies",
       ],
       accountability: [
-        "Data stewardship for autonomous agents",
-        "Tamper-resistant data lineage governance",
+        "Data stewardship for autonomous agent",
+        "Tamper resistant data lineage governance",
         "Rules for agent data access to context and semantic data",
       ],
     },
   },
 ];
 
-const questionnaireSections = stages.map((stage) => ({
-  title: stage.name,
-  dimensions: dimensions.map((dimension) => ({
-    id: `${stage.name}-${dimension.id}`,
-    title: dimension.shortName,
-    questions: stage.practices[dimension.id],
-  })),
+const assessmentStages: AssessmentStage[] = stages.map((stage, stageIndex) => ({
+  name: stage.name,
+  practices: Object.fromEntries(
+    dimensions.map((dimension) => [
+      dimension.id,
+      stage.practices[dimension.id].map((label, practiceIndex) => ({
+        id: `${stageIndex}-${dimension.id}-${practiceIndex}`,
+        label,
+        stageIndex,
+        stageName: stage.name,
+        dimensionId: dimension.id,
+        dimensionName: dimension.name,
+        dimensionShortName: dimension.shortName,
+      })),
+    ]),
+  ) as Record<DimensionId, Practice[]>,
 }));
 
-const totalPractices = stages.reduce(
+const dimensionOrder = Object.fromEntries(
+  dimensions.map((dimension, index) => [dimension.id, index]),
+) as Record<DimensionId, number>;
+
+const totalPractices = assessmentStages.reduce(
   (sum, stage) =>
     sum +
     dimensions.reduce(
-      (stageTotal, dimension) => stageTotal + stage.practices[dimension.id].length,
+      (stageTotal, dimension) =>
+        stageTotal + (stage.name === "Initial" ? 0 : stage.practices[dimension.id].length),
       0,
     ),
   0,
 );
 
+function getStageName(stageIndex: number) {
+  return stageIndex >= 0 ? assessmentStages[stageIndex].name : "Not yet established";
+}
+
+function buildAssessmentPayload(checkedPractices: Record<string, boolean>): AssessmentPayload {
+  return {
+    checkedPracticeIds: Object.entries(checkedPractices)
+      .filter(([, checked]) => checked)
+      .map(([practiceId]) => practiceId),
+  };
+}
+
+function assessDimension(
+  dimensionId: DimensionId,
+  checkedPracticeIds: Set<string>,
+): DimensionAssessment {
+  let achievedStageIndex = 0;
+
+  for (const stage of assessmentStages.slice(1)) {
+    const practices = stage.practices[dimensionId];
+    const stageComplete = practices.every((practice) => checkedPracticeIds.has(practice.id));
+
+    if (!stageComplete) {
+      return {
+        dimensionId,
+        achievedStageIndex,
+        achievedStageName: getStageName(achievedStageIndex),
+        blockingStageIndex: practices[0]?.stageIndex ?? null,
+        blockingStageName: stage.name,
+        blockingPractices: practices.filter((practice) => !checkedPracticeIds.has(practice.id)),
+      };
+    }
+
+    achievedStageIndex = practices[0]?.stageIndex ?? achievedStageIndex;
+  }
+
+  return {
+    dimensionId,
+    achievedStageIndex,
+    achievedStageName: getStageName(achievedStageIndex),
+    blockingStageIndex: null,
+    blockingStageName: null,
+    blockingPractices: [],
+  };
+}
+
+function pickRecommendations(dimensionResults: DimensionAssessment[]) {
+  const eligibleResults = dimensionResults.filter(
+    (dimensionResult) => dimensionResult.blockingPractices.length > 0,
+  );
+
+  if (eligibleResults.length === 0) {
+    return [];
+  }
+
+  const allEqual = dimensionResults.every(
+    (dimensionResult) =>
+      dimensionResult.achievedStageIndex === dimensionResults[0].achievedStageIndex,
+  );
+
+  if (allEqual) {
+    return dimensions
+      .flatMap((dimension) => {
+        const result = eligibleResults.find(
+          (dimensionResult) => dimensionResult.dimensionId === dimension.id,
+        );
+        return result ? result.blockingPractices.slice(0, 1) : [];
+      })
+      .slice(0, 3);
+  }
+
+  const rankedResults = [...eligibleResults].sort((left, right) => {
+    if (left.achievedStageIndex !== right.achievedStageIndex) {
+      return left.achievedStageIndex - right.achievedStageIndex;
+    }
+
+    return dimensionOrder[left.dimensionId] - dimensionOrder[right.dimensionId];
+  });
+
+  const recommendations: Practice[] = [];
+
+  for (const result of rankedResults) {
+    for (const practice of result.blockingPractices) {
+      recommendations.push(practice);
+
+      if (recommendations.length === 3) {
+        return recommendations;
+      }
+    }
+  }
+
+  return recommendations;
+}
+
+function assessPractices(payload: AssessmentPayload): AssessmentResult {
+  const checkedPracticeIds = new Set(payload.checkedPracticeIds);
+  const dimensionResults = dimensions.map((dimension) =>
+    assessDimension(dimension.id, checkedPracticeIds),
+  );
+  const overallStageIndex = Math.min(
+    ...dimensionResults.map((dimensionResult) => dimensionResult.achievedStageIndex),
+  );
+
+  return {
+    payload,
+    overallStageIndex,
+    overallStageName: getStageName(overallStageIndex),
+    dimensions: dimensionResults,
+    recommendations: pickRecommendations(dimensionResults),
+  };
+}
+
 export default function Home() {
+  const [checkedPractices, setCheckedPractices] = useState<Record<string, boolean>>({});
+  const [assessmentResult, setAssessmentResult] = useState<AssessmentResult | null>(null);
+
+  function togglePractice(practiceId: string) {
+    setCheckedPractices((current) => ({
+      ...current,
+      [practiceId]: !current[practiceId],
+    }));
+  }
+
+  function handleAssess() {
+    const payload = buildAssessmentPayload(checkedPractices);
+    setAssessmentResult(assessPractices(payload));
+  }
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.95),_rgba(235,242,237,0.88)_48%,_rgba(214,226,219,0.8))] px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-        <section className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-[0_24px_80px_rgba(53,75,64,0.12)] backdrop-blur md:p-8">
+        <form className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-[0_24px_80px_rgba(53,75,64,0.12)] backdrop-blur md:p-8">
           <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-sm font-medium uppercase tracking-[0.24em] text-emerald-700">
                 Assessment Overview
               </p>
               <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 md:text-4xl">
-                Maturity Matrix
+                Data Governance AI Maturity Model
               </h1>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600 md:text-base">
-                The matrix reflects your 4 maturity stages across 3 dimensions, with each practice mirrored in the questionnaire below.
+                Checked practices are collected into a lightweight JSON payload of practice ids and evaluated locally against the maturity rules.
               </p>
             </div>
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
@@ -180,14 +357,14 @@ export default function Home() {
                 ))}
               </div>
 
-              {stages.map((stage, stageIndex) => (
+              {assessmentStages.map((stage, stageIndex) => (
                 <div
                   key={stage.name}
                   className="grid grid-cols-[15rem_repeat(3,minmax(0,1fr))] bg-white text-sm text-slate-700"
                 >
                   <div
                     className={`bg-[linear-gradient(180deg,_rgba(140,185,226,0.7),_rgba(76,132,188,0.92))] px-5 py-6 text-white ${
-                      stageIndex < stages.length - 1 ? "border-b border-slate-200" : ""
+                      stageIndex < assessmentStages.length - 1 ? "border-b border-slate-200" : ""
                     }`}
                   >
                     <div className="text-base font-semibold leading-6">{stage.name}</div>
@@ -197,87 +374,149 @@ export default function Home() {
                     <div
                       key={`${stage.name}-${dimension.id}`}
                       className={`border-l border-slate-200 px-5 py-6 ${
-                        stageIndex < stages.length - 1 ? "border-b border-slate-200" : ""
+                        stageIndex < assessmentStages.length - 1 ? "border-b border-slate-200" : ""
                       }`}
                     >
-                      <ul className="ml-4 space-y-2 text-sm leading-6 text-slate-700">
+                      <div className="space-y-2 text-sm leading-6 text-slate-700">
                         {stage.practices[dimension.id].map((practice) => (
-                          <li key={practice} className="list-disc marker:text-emerald-600">
-                            {practice}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-[0_24px_80px_rgba(53,75,64,0.12)] backdrop-blur md:p-8">
-          <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className="text-sm font-medium uppercase tracking-[0.24em] text-emerald-700">
-                Questionnaire
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                Check Questions
-              </h2>
-              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600 md:text-base">
-                Every practice from the matrix is listed below as a checkbox so the assessment can later be scored from the same model.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              {totalPractices} questionnaire items
-            </div>
-          </div>
-
-          <form className="space-y-5">
-            {questionnaireSections.map((section) => (
-              <fieldset
-                key={section.title}
-                className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5"
-              >
-                <legend className="px-2 text-base font-semibold text-slate-950">
-                  {section.title}
-                </legend>
-                <div className="mt-4 grid gap-4 lg:grid-cols-3">
-                  {section.dimensions.map((dimension) => (
-                    <div key={dimension.id} className="rounded-[1.25rem] bg-white p-4 shadow-sm">
-                      <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-600">
-                        {dimension.title}
-                      </h3>
-                      <div className="mt-3 space-y-3">
-                        {dimension.questions.map((question) => (
                           <label
-                            key={question}
-                            className="flex items-start gap-3 rounded-2xl border border-transparent bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700 transition-colors hover:border-emerald-200"
+                            key={practice.id}
+                            className={`flex items-start gap-3 ${
+                              stageIndex === 0 ? "cursor-default" : "cursor-pointer"
+                            }`}
                           >
-                            <input
-                              type="checkbox"
-                              className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                            />
-                            <span>{question}</span>
+                            {stageIndex > 0 ? (
+                              <input
+                                type="checkbox"
+                                checked={Boolean(checkedPractices[practice.id])}
+                                onChange={() => togglePractice(practice.id)}
+                                aria-label={`${stage.name} ${dimension.shortName} ${practice.label}`}
+                                className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              />
+                            ) : (
+                              <span className="mt-1 block h-4 w-4 shrink-0" aria-hidden="true" />
+                            )}
+                            <span className={stageIndex === 0 ? "font-medium" : undefined}>
+                              {practice.label}
+                            </span>
                           </label>
                         ))}
                       </div>
                     </div>
                   ))}
                 </div>
-              </fieldset>
-            ))}
-
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                className="rounded-2xl bg-slate-950 px-6 py-3 text-sm font-semibold text-white transition-transform duration-200 hover:-translate-y-0.5 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2"
-              >
-                Update
-              </button>
+              ))}
             </div>
-          </form>
-        </section>
+          </div>
+
+          <section className="mt-6 rounded-[1.5rem] border border-slate-200 bg-[linear-gradient(180deg,_rgba(249,250,251,0.96),_rgba(255,255,255,0.88))] p-5 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Overall maturity
+                </p>
+                <div className="mt-2 text-2xl font-semibold text-slate-950">
+                  {assessmentResult?.overallStageName ?? "Run assessment"}
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  Each capability dimension is assessed independently, while the overall maturity stays capped by the lowest fully completed dimension.
+                </p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  {dimensions.map((dimension) => {
+                    const dimensionResult = assessmentResult?.dimensions.find(
+                      (result) => result.dimensionId === dimension.id,
+                    );
+
+                    return (
+                      <div
+                        key={dimension.id}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm"
+                      >
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          {dimension.shortName}
+                        </div>
+                        <div className="mt-2 text-sm font-semibold text-slate-900">
+                          {dimensionResult?.achievedStageName ?? "Not assessed"}
+                        </div>
+                        <div className="mt-1 text-xs leading-5 text-slate-500">
+                          {dimensionResult?.blockingStageName
+                            ? `Next gate: ${dimensionResult.blockingStageName}`
+                            : "All stages fulfilled"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="w-full max-w-xl">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Next recommended practices
+                    </p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      The next three practices are selected from the lowest achieved capability dimension, with ties handled by the stated rules.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-amber-800">
+                    Top 3
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  {Array.from({ length: 3 }).map((_, index) => {
+                    const practice = assessmentResult?.recommendations[index];
+
+                    return (
+                      <article
+                        key={practice?.id ?? `placeholder-${index}`}
+                        className={`rounded-[1.35rem] border px-4 py-4 transition-all duration-200 ${
+                          practice
+                            ? "border-amber-300 bg-[linear-gradient(180deg,_rgba(255,251,235,0.98),_rgba(255,247,212,0.95))] shadow-[0_0_0_1px_rgba(245,158,11,0.16),_0_0_28px_rgba(245,158,11,0.24)]"
+                            : "border-slate-200 bg-white shadow-sm"
+                        }`}
+                      >
+                        {practice ? (
+                          <>
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-800">
+                              {practice.dimensionShortName}
+                            </div>
+                            <div className="mt-2 text-sm font-semibold leading-6 text-slate-950">
+                              {practice.label}
+                            </div>
+                            <div className="mt-3 text-xs leading-5 text-slate-600">
+                              {practice.stageName}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              Recommendation slot
+                            </div>
+                            <div className="mt-2 text-sm leading-6 text-slate-500">
+                              Run the assessment to highlight the next recommended practice.
+                            </div>
+                          </>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={handleAssess}
+              className="rounded-2xl bg-slate-950 px-6 py-3 text-sm font-semibold text-white transition-transform duration-200 hover:-translate-y-0.5 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2"
+            >
+              Assess
+            </button>
+          </div>
+        </form>
       </div>
     </main>
   );
